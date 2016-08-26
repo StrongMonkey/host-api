@@ -5,16 +5,25 @@ import (
 	"github.com/fsouza/go-dockerclient"
 	"os"
 	"path"
+	"fmt"
+	"runtime"
 )
 
 const (
 	defaultUnixSocket = "unix:///var/run/docker.sock"
+	defaultWindowSocket = fmt.Sprintf("tcp://%v:2375", os.Getenv("CATTLE_AGENT_IP"))
 	defaultApiVersion = "1.18"
 )
 
 func NewDockerClient() (*docker.Client, error) {
 	apiVersion := getenv("DOCKER_API_VERSION", defaultApiVersion)
-	endpoint := defaultUnixSocket
+	var endpoint string
+	if runtime.GOOS == "windows" {
+		apiVersion = "1.24"
+		endpoint = defaultWindowSocket
+	} else {
+		endpoint = defaultUnixSocket
+	}
 
 	if os.Getenv("CATTLE_DOCKER_USE_BOOT2DOCKER") == "true" {
 		endpoint = os.Getenv("DOCKER_HOST")
