@@ -2,7 +2,6 @@ package exec
 
 import (
 	"encoding/base64"
-	"io"
 	"net/url"
 
 	log "github.com/Sirupsen/logrus"
@@ -13,6 +12,11 @@ import (
 
 	"github.com/rancher/host-api/auth"
 	"github.com/rancher/host-api/events"
+	//"github.com/docker/engine-api/client"
+	//"github.com/docker/engine-api/types/container"
+	"github.com/docker/engine-api/types"
+	"github.com/google/cadvisor/Godeps/_workspace/src/golang.org/x/net/context"
+	"net"
 )
 
 type ExecHandler struct {
@@ -33,30 +37,41 @@ func (h *ExecHandler) Handle(key string, initialMessage string, incomingMessages
 	}
 
 	execMap := token.Claims["exec"].(map[string]interface{})
-	execConfig := convert(execMap)
+	execConfig := convertMap(execMap)
 
-	client, err := events.NewDockerClient()
+	//client, err := events.NewDockerClient()
+	client, err := events.DockerClient()
 	if err != nil {
 		log.WithFields(log.Fields{"error": err}).Error("Couldn't get docker client.")
 		return
 	}
 
-	outputReader, outputWriter := io.Pipe()
-	inputReader, inputWriter := io.Pipe()
+	//outputReader, outputWriter := io.Pipe()
+	//inputReader, inputWriter := io.Pipe()
 
-	execObj, err := client.CreateExec(execConfig)
+	container := execMap["Container"].(string)
+	if container == "" {
+		return
+	}
+
+	execObj, err := client.ContainerExecCreate(context.Background(), container, execConfig)
 	if err != nil {
 		return
 	}
 
-	go func(w *io.PipeWriter) {
+	hijack, err := client.ContainerExecAttach(context.Background(), execObj.ID, execConfig)
+	if err != nil {
+		return
+	}
+
+	go func(c *net.Conn) {
 		for {
 			msg, ok := <-incomingMessages
 			if !ok {
-				if _, err := inputWriter.Write([]byte("\x04")); err != nil {
+				if _, err := (*c).Write([]byte("\x04")); err != nil {
 					log.WithFields(log.Fields{"error": err}).Error("Error writing EOT message.")
 				}
-				w.Close()
+				(*c).Close()
 				return
 			}
 			data, err := base64.StdEncoding.DecodeString(msg)
@@ -64,14 +79,14 @@ func (h *ExecHandler) Handle(key string, initialMessage string, incomingMessages
 				log.WithFields(log.Fields{"error": err}).Error("Error decoding message.")
 				continue
 			}
-			inputWriter.Write([]byte(data))
+			(*c).Write([]byte(data))
 		}
-	}(outputWriter)
+	}(&hijack.Conn)
 
-	go func(r *io.PipeReader) {
+	go func(c *net.Conn) {
 		buffer := make([]byte, 4096, 4096)
 		for {
-			c, err := r.Read(buffer)
+			c, err := (*c).Read(buffer)
 			if c > 0 {
 				text := base64.StdEncoding.EncodeToString(buffer[:c])
 				message := common.Message{
@@ -85,8 +100,9 @@ func (h *ExecHandler) Handle(key string, initialMessage string, incomingMessages
 				break
 			}
 		}
-	}(outputReader)
+	}(&hijack.Conn)
 
+	/*
 	startConfig := dockerClient.StartExecOptions{
 		Detach:       false,
 		Tty:          true,
@@ -94,8 +110,57 @@ func (h *ExecHandler) Handle(key string, initialMessage string, incomingMessages
 		InputStream:  inputReader,
 		OutputStream: outputWriter,
 	}
+	*/
 
-	client.StartExec(execObj.ID, startConfig)
+
+	startCheck := types.ExecStartCheck{
+		Detach: false,
+		Tty: true,
+	}
+
+	client.ContainerExecStart(context.Background(), execObj.ID, startCheck)
+}
+
+func convertMap(execMap map[string]interface{}) types.ExecConfig {
+	config := types.ExecConfig{}
+
+	if param, ok := execMap["AttachStdin"]; ok {
+		if val, ok := param.(bool); ok {
+			config.AttachStdin = val
+		}
+	}
+
+	if param, ok := execMap["AttachStdout"]; ok {
+		if val, ok := param.(bool); ok {
+			config.AttachStdout = val
+		}
+	}
+
+	if param, ok := execMap["AttachStderr"]; ok {
+		if val, ok := param.(bool); ok {
+			config.AttachStderr = val
+		}
+	}
+
+	if param, ok := execMap["Tty"]; ok {
+		if val, ok := param.(bool); ok {
+			config.Tty = val
+		}
+	}
+
+	if param, ok := execMap["Cmd"]; ok {
+		cmd := []string{}
+		if list, ok := param.([]interface{}); ok {
+			for _, item := range list {
+				if val, ok := item.(string); ok {
+					cmd = append(cmd, val)
+				}
+			}
+		}
+		config.Cmd = cmd
+	}
+
+	return config
 }
 
 func convert(execMap map[string]interface{}) dockerClient.CreateExecOptions {

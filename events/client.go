@@ -7,11 +7,11 @@ import (
 	"path"
 	"fmt"
 	"runtime"
+	engineapi "github.com/docker/engine-api/client"
 )
 
 const (
 	defaultUnixSocket = "unix:///var/run/docker.sock"
-	defaultWindowSocket = fmt.Sprintf("tcp://%v:2375", os.Getenv("CATTLE_AGENT_IP"))
 	defaultApiVersion = "1.18"
 )
 
@@ -20,7 +20,7 @@ func NewDockerClient() (*docker.Client, error) {
 	var endpoint string
 	if runtime.GOOS == "windows" {
 		apiVersion = "1.24"
-		endpoint = defaultWindowSocket
+		endpoint = fmt.Sprintf("tcp://%v:2375", os.Getenv("CATTLE_AGENT_IP"))
 	} else {
 		endpoint = defaultUnixSocket
 	}
@@ -39,6 +39,18 @@ func NewDockerClient() (*docker.Client, error) {
 	}
 
 	return docker.NewVersionedClient(endpoint, apiVersion)
+}
+
+func DockerClient() (*engineapi.Client, error) {
+	apiVersion := getenv("DOCKER_API_VERSION", defaultApiVersion)
+	var endpoint string
+	if runtime.GOOS == "windows" {
+		apiVersion = "1.24"
+		endpoint = fmt.Sprintf("tcp://%v:2375", os.Getenv("CATTLE_AGENT_IP"))
+	} else {
+		endpoint = defaultUnixSocket
+	}
+	return engineapi.NewClient(endpoint, apiVersion, nil, nil)
 }
 
 func getenv(key string, defaultVal string) string {
