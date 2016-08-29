@@ -1,35 +1,43 @@
 .PHONY: \
 	all \
-	deps \
-	updatedeps \
-	testdeps \
-	updatetestdeps \
-	cov \
+	lint \
+	vet \
+	fmt \
+	fmtcheck \
+	pretest \
 	test \
+	integration \
 	clean
 
 all: test
 
-deps:
-	go get -d -v ./...
+lint:
+	@ go get -v github.com/golang/lint/golint
+	@ export output="$$(golint . | grep -v 'type name will be used as docker.DockerInfo')"; \
+		[ -n "$${output}" ] && echo "$${output}" && export status=1; \
+		exit $${status:-0}
 
-updatedeps:
-	go get -d -v -u -f ./...
+vet:
+	go vet ./...
+
+fmt:
+	gofmt -s -w .
+
+fmtcheck:
+	[ -z "$$(gofmt -s -d . | tee /dev/stderr)" ]
 
 testdeps:
-	go get -d -v -t ./...
+	go get -d -t ./...
 
-updatetestdeps:
-	go get -d -v -t -u -f ./...
+pretest: testdeps lint vet fmtcheck
 
-cov: testdeps
-	go get -v github.com/axw/gocov/gocov
-	go get golang.org/x/tools/cmd/cover
-	gocov test | gocov report
+gotest:
+	go test $(GO_TEST_FLAGS) ./...
 
-test: testdeps
-	go test ./...
-	./testing/bin/fmtpolice
+test: pretest gotest
+
+integration:
+	go test -tags docker_integration -run TestIntegration -v
 
 clean:
 	go clean ./...
